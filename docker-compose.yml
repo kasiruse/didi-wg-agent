@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  wg-agent:
+    build: .
+    container_name: didi-wg-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./sessions:/app/sessions
+    environment:
+      - TZ=Europe/Berlin

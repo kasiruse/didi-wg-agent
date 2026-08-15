@@ -1,148 +1,139 @@
-import asyncio
-import json
 import os
-from typing import List, Dict, Optional
+import json
+import random
+import asyncio
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
-SEEN_IDS_FILE = "sessions/seen_listings.json"
-SESSION_PATH = "sessions/user_session.json"
+SEEN_FILE = "sessions/seen_listings.json"
+SESSION_FILE = "sessions/user_session.json"
 
-def load_seen_ids() -> set:
-    if os.path.exists(SEEN_IDS_FILE):
+def _load_seen_listings() -> set:
+    if os.path.exists(SEEN_FILE):
         try:
-            with open(SEEN_IDS_FILE, "r", encoding="utf-8") as f:
+            with open(SEEN_FILE, "r", encoding="utf-8") as f:
                 return set(json.load(f))
         except Exception:
             return set()
     return set()
 
-def save_seen_ids(seen_ids: set):
-    os.makedirs(os.path.dirname(SEEN_IDS_FILE), exist_ok=True)
-    with open(SEEN_IDS_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(seen_ids), f)
+def _save_seen_listings(seen: set):
+    os.makedirs(os.path.dirname(SEEN_FILE), exist_ok=True)
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(seen), f)
 
 class WGScraper:
     def __init__(self, search_url: str):
         self.search_url = search_url
-        self.seen_ids = load_seen_ids()
+        self.seen_listings = _load_seen_listings()
 
-    async def _create_context(self, browser):
-        context_kwargs = {
-            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "locale": "de-DE",
-            "timezone_id": "Europe/Berlin"
-        }
-        if os.path.exists(SESSION_PATH):
-            context_kwargs["storage_state"] = SESSION_PATH
-        return await browser.new_context(**context_kwargs)
-
-    async def fetch_new_listings(self) -> List[Dict]:
-        new_listings = []
-
+    async def fetch_new_listings(self) -> list:
+        new_items = []
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await self._create_context(browser)
+            context = await browser.new_context(
+                storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+                user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
             page = await context.new_page()
 
-            try:
-                print(f"🔍 Fetching listings from: {self.search_url}")
-                await page.goto(self.search_url, wait_until="domcontentloaded", timeout=45000)
+            print(f"🔍 Fetching listings from: {self.search_url}")
+            await page.goto(self.search_url, timeout=60000, wait_until="domcontentloaded")
+            await asyncio.sleep(random.uniform(2.5, 4.5))
 
-                # Dismiss cookie banner if present
-                try:
-                    accept_btn = page.locator("#cmpwelcomebtnyes, button:has-text('Akzeptieren'), button:has-text('Alle akzeptieren')")
-                    if await accept_btn.first.is_visible(timeout=3000):
-                        await accept_btn.first.click()
-                except Exception:
-                    pass
+            content = await page.content()
+            soup = BeautifulSoup(content, "html.parser")
 
-                await page.wait_for_selector(".wgg_card", timeout=10000)
-                cards = await page.locator(".wgg_card").all()
+            listing_cards = soup.select(".wgg_card") or soup.select(".offer_list_item")
+            for card in listing_cards:
+                card_id = card.get("data-id") or card.get("id")
+                if not card_id:
+                    link_tag = card.select_one("a[href*='.html']")
+                    if link_tag and link_tag.get("href"):
+                        href = link_tag.get("href")
+                        card_id = href.split(".")[-2] if len(href.split(".")) >= 3 else href
 
-                for card in cards:
-                    card_class = await card.get_attribute("class") or ""
-                    if "sponsor" in card_class.lower():
+                if card_id and card_id not in self.seen_listings:
+                    link_elem = card.select_one("a[href*='.html']")
+                    if not link_elem:
                         continue
+                    url = link_elem.get("href")
+                    if not url.startswith("http"):
+                        url = f"https://www.wg-gesucht.de/{url.lstrip('/')}"
 
-                    listing_id = await card.get_attribute("data-id")
-                    if not listing_id or listing_id in self.seen_ids:
-                        continue
+                    title = card.get_text(separator=" ", strip=True)[:100]
 
-                    title_elem = card.locator(".truncate_title a")
-                    if await title_elem.count() == 0:
-                        continue
+                    print(f"📄 Scraping details for listing ID: {card_id}")
+                    detail_page = await context.new_page()
+                    try:
+                        await detail_page.goto(url, timeout=45000, wait_until="domcontentloaded")
+                        await asyncio.sleep(random.uniform(1.8, 3.5))
+                        detail_content = await detail_page.content()
+                        detail_soup = BeautifulSoup(detail_content, "html.parser")
+                        description_text = detail_soup.get_text(separator="\n", strip=True)
+                    except Exception as e:
+                        description_text = title
+                        print(f"⚠️ Failed to fetch details for {card_id}: {e}")
+                    finally:
+                        await detail_page.close()
 
-                    title = (await title_elem.inner_text()).strip()
-                    href = await title_elem.get_attribute("href")
-                    detail_url = f"https://www.wg-gesucht.de/{href}" if href and not href.startswith("http") else href
-                    summary_text = (await card.inner_text()).strip()
+                    self.seen_listings.add(card_id)
+                    _save_seen_listings(self.seen_listings)
 
-                    new_listings.append({
-                        "id": listing_id,
+                    new_items.append({
+                        "id": str(card_id),
                         "title": title,
-                        "url": detail_url,
-                        "summary_text": summary_text
+                        "url": url,
+                        "full_description": description_text
                     })
 
-                # Fetch full descriptions
-                for item in new_listings:
-                    print(f"📄 Scraping details for listing ID: {item['id']}")
-                    await page.goto(item["url"], wait_until="domcontentloaded", timeout=30000)
+                    # Short natural pause between opening listing pages
+                    await asyncio.sleep(random.uniform(1.0, 2.5))
 
-                    try:
-                        desc_elem = page.locator("#freitext, .section_freitexte")
-                        if await desc_elem.first.is_visible(timeout=4000):
-                            item["full_description"] = (await desc_elem.first.inner_text()).strip()
-                        else:
-                            item["full_description"] = item["summary_text"]
-                    except Exception:
-                        item["full_description"] = item["summary_text"]
+            await browser.close()
+        return new_items
 
-                    self.seen_ids.add(item["id"])
-                    await asyncio.sleep(2)
+    async def send_message_to_listing(self, url: str, message: str) -> bool:
+        if not os.path.exists(SESSION_FILE):
+            print("❌ Authentication session not found.")
+            return False
 
-                save_seen_ids(self.seen_ids)
-
-            except Exception as e:
-                print(f"❌ Error during scraping: {e}")
-            finally:
-                await browser.close()
-
-        return new_listings
-
-    async def send_message_to_listing(self, listing_url: str, message_text: str) -> bool:
-        """
-        Sends an application message directly to the listing owner
-        """
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await self._create_context(browser)
+            context = await browser.new_context(storage_state=SESSION_FILE)
             page = await context.new_page()
 
             try:
-                print(f"📨 Navigating to listing: {listing_url}")
-                await page.goto(listing_url, wait_until="domcontentloaded", timeout=45000)
+                print(f"🌐 Navigating to listing: {url}")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                await asyncio.sleep(random.uniform(2.0, 4.0))
 
-                # Click contact button
-                contact_btn = page.locator("a:has-text('Nachricht senden'), button:has-text('Nachricht senden')")
-                if await contact_btn.first.is_visible(timeout=5000):
-                    await contact_btn.first.click()
-                    await page.wait_for_load_state("domcontentloaded")
+                message_btn = page.locator("a:has-text('Nachricht senden'), button:has-text('Nachricht senden')")
+                if await message_btn.count() > 0:
+                    await message_btn.first.click()
+                    await asyncio.sleep(random.uniform(2.0, 3.5))
 
-                # Fill the message text area
-                textarea = page.locator("#svalidated_message, textarea[name='message']")
-                await textarea.wait_for(state="visible", timeout=10000)
-                await textarea.fill(message_text)
+                textarea = page.locator("textarea#message_input, textarea[name='message'], textarea")
+                if await textarea.count() > 0:
+                    await textarea.first.click()
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
+                    # Simulating natural human typing speed
+                    await textarea.first.fill(message)
+                    await asyncio.sleep(random.uniform(2.5, 4.5))
 
-                # Click send message button
-                submit_btn = page.locator("#create_message, button[type='submit']:has-text('Senden')")
-                await submit_btn.click()
-                await page.wait_for_timeout(3000)
+                    submit_btn = page.locator("button[type='submit']:has-text('Nachricht senden'), input[type='submit']")
+                    if await submit_btn.count() > 0:
+                        await submit_btn.first.click()
+                        await asyncio.sleep(random.uniform(3.0, 5.0))
+                        print(f"✅ Successfully sent message to {url}")
+                        await browser.close()
+                        return True
 
-                print(f"✅ Message sent successfully to: {listing_url}")
-                return True
-            except Exception as e:
-                print(f"❌ Failed to send message: {e}")
-                return False
-            finally:
+                print(f"⚠️ Message form elements not found on {url}")
                 await browser.close()
+                return False
+
+            except Exception as e:
+                print(f"❌ Error sending message: {e}")
+                await browser.close()
+                return False

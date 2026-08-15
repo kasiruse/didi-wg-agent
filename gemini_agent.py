@@ -1,9 +1,12 @@
 import os
 import json
+import time
+import random
 import yaml
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 
 load_dotenv()
 
@@ -17,7 +20,7 @@ def load_config() -> dict:
     with open("config.yaml", "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def evaluate_and_draft_message(listing_text: str) -> dict:
+def evaluate_and_draft_message(listing_text: str, max_retries: int = 5) -> dict:
     config = load_config()
     profile = config.get("applicant_profile", {})
     prompt_template = config.get("prompt_template", "")
@@ -34,20 +37,32 @@ def evaluate_and_draft_message(listing_text: str) -> dict:
         listing_text=listing_text
     )
 
-    response = client.models.generate_content(
-        model='gemini-3.7-flash',
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json"
-        )
-    )
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model='gemini-3.7-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+            return json.loads(response.text)
 
-    try:
-        return json.loads(response.text)
-    except Exception as e:
-        print(f"Error parsing Gemini response: {e}")
-        return {
-            "is_match": False,
-            "reason": "Failed to parse LLM response",
-            "german_message": ""
-        }
+        except ClientError as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                jitter = random.uniform(2.0, 5.0)
+                wait_time = (20 * (attempt + 1)) + jitter
+                print(f"⏳ Rate limit on Gemini 3.7. Backing off for {wait_time:.1f}s...")
+                time.sleep(wait_time)
+            else:
+                print(f"API Client Error: {e}")
+                break
+        except Exception as e:
+            print(f"Error executing Gemini request: {e}")
+            break
+
+    return {
+        "is_match": False,
+        "reason": "Failed to evaluate listing via Gemini 3.7",
+        "german_message": ""
+    }

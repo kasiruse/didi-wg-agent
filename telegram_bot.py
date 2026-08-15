@@ -1,13 +1,29 @@
 import os
+import json
 import asyncio
+from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ContextTypes
 
+load_dotenv()
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+CACHE_FILE = "sessions/proposals.json"
 
-# In-memory storage for pending proposals
-PENDING_PROPOSALS = {}
+def _load_proposals() -> dict:
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_proposals(data: dict):
+    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 class TelegramNotifier:
     def __init__(self, on_approve_callback):
@@ -19,13 +35,16 @@ class TelegramNotifier:
         self.app.add_handler(CallbackQueryHandler(self.handle_button_click))
 
     async def send_listing_proposal(self, listing_id: str, title: str, url: str, reason: str, german_message: str):
-        PENDING_PROPOSALS[listing_id] = {
+        proposals = _load_proposals()
+        proposals[str(listing_id)] = {
             "url": url,
-            "message": german_message
+            "message": german_message,
+            "title": title
         }
+        _save_proposals(proposals)
 
         text = (
-            f"🏠 *New Matching WG Found!*\n\n"
+            f"🏠 *New Matching WG Found (Gemini 3.7)!*\n\n"
             f"📌 *Title:* {title}\n"
             f"🔗 *URL:* [View on WG-Gesucht]({url})\n\n"
             f"💡 *Match Reason:* {reason}\n\n"
@@ -53,23 +72,29 @@ class TelegramNotifier:
         await query.answer()
 
         data = query.data
+        proposals = _load_proposals()
+
         if data.startswith("send_"):
             listing_id = data.replace("send_", "")
-            proposal = PENDING_PROPOSALS.get(listing_id)
+            proposal = proposals.get(str(listing_id))
 
             if proposal:
                 await query.edit_message_text(f"⏳ Sending message for listing {listing_id}...")
                 success = await self.on_approve_callback(proposal["url"], proposal["message"])
                 if success:
                     await query.edit_message_text(f"✅ Message sent successfully!\n🔗 {proposal['url']}")
+                    proposals.pop(str(listing_id), None)
+                    _save_proposals(proposals)
                 else:
                     await query.edit_message_text(f"❌ Failed to send message for listing:\n🔗 {proposal['url']}")
             else:
-                await query.edit_message_text("⚠️ Proposal expired or not found.")
+                await query.edit_message_text("⚠️ Proposal expired or not found in persistent cache.")
 
         elif data.startswith("skip_"):
             listing_id = data.replace("skip_", "")
-            PENDING_PROPOSALS.pop(listing_id, None)
+            if str(listing_id) in proposals:
+                proposals.pop(str(listing_id), None)
+                _save_proposals(proposals)
             await query.edit_message_text(f"🗑 Listing {listing_id} skipped.")
 
     async def start(self):

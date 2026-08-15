@@ -4,6 +4,7 @@ import asyncio
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, ContextTypes
+from telegram.request import HTTPXRequest
 
 load_dotenv()
 
@@ -27,7 +28,14 @@ def _save_proposals(data: dict):
 
 class TelegramNotifier:
     def __init__(self, on_approve_callback):
-        self.app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        # Increased read and connect timeouts to prevent ReadError exceptions
+        request_config = HTTPXRequest(
+            connection_pool_size=8,
+            read_timeout=30.0,
+            write_timeout=20.0,
+            connect_timeout=20.0
+        )
+        self.app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).request(request_config).build()
         self.on_approve_callback = on_approve_callback
         self.setup_handlers()
 
@@ -100,9 +108,10 @@ class TelegramNotifier:
     async def start(self):
         await self.app.initialize()
         await self.app.start()
-        await self.app.updater.start_polling()
+        await self.app.updater.start_polling(poll_interval=2.0)
 
     async def stop(self):
-        await self.app.updater.stop()
+        if self.app.updater and self.app.updater.running:
+            await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()

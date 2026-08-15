@@ -1,13 +1,18 @@
 # Target search URL on WG-Gesucht
 search_url: "https://www.wg-gesucht.de/wg-zimmer-und-1-zimmer-wohnungen-und-wohnungen-und-haeuser-in-Berlin.8.0+1+2+3.1.0.html"
 
+max_pages_to_crawl: 3
+max_listings_per_cycle: 8
+# Random delay range (in seconds) between every scrape
+listing_scrape_delay_min: 7
+listing_scrape_delay_max: 13
 # Random delay range (in seconds) between full scraper crawl cycles
-crawl_interval_min: 180
-crawl_interval_max: 300
+crawl_interval_min: 300
+crawl_interval_max: 600
 
 # Random delay range (in seconds) between analyzing consecutive listings
-analysis_delay_min: 12
-analysis_delay_max: 18
+analysis_delay_min: 15
+analysis_delay_max: 23
 
 # Random human-like typing/idle delay range (in seconds)
 action_delay_min: 3

@@ -2,12 +2,14 @@ import os
 import json
 import time
 import random
+import warnings
 import yaml
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, APIError
 
+warnings.filterwarnings("ignore")
 load_dotenv()
 
 api_key = os.getenv("GEMINI_API_KEY")
@@ -20,7 +22,7 @@ def load_config() -> dict:
     with open("config.yaml", "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def evaluate_and_draft_message(listing_text: str, max_retries: int = 5) -> dict:
+def evaluate_and_draft_message(listing_text: str, max_retries: int = 4) -> dict:
     config = load_config()
     profile = config.get("applicant_profile", {})
     prompt_template = config.get("prompt_template", "")
@@ -48,21 +50,23 @@ def evaluate_and_draft_message(listing_text: str, max_retries: int = 5) -> dict:
             )
             return json.loads(response.text)
 
-        except ClientError as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                jitter = random.uniform(2.0, 5.0)
-                wait_time = (20 * (attempt + 1)) + jitter
-                print(f"⏳ Rate limit on Gemini 3.7. Backing off for {wait_time:.1f}s...")
+        except (ClientError, APIError, Exception) as e:
+            err_str = str(e)
+            is_overloaded = "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str
+            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+
+            if (is_overloaded or is_rate_limit) and attempt < max_retries - 1:
+                # Exponential backoff with jitter
+                wait_time = (15 * (attempt + 1)) + random.uniform(2.0, 5.0)
+                print(f"⚠️ Google API busy ({'503 High Demand' if is_overloaded else '429 Rate Limit'}). Retrying attempt {attempt+1}/{max_retries} after {wait_time:.1f}s...", flush=True)
                 time.sleep(wait_time)
+                continue
             else:
-                print(f"API Client Error: {e}")
+                print(f"❌ Failed to evaluate with Gemini: {e}", flush=True)
                 break
-        except Exception as e:
-            print(f"Error executing Gemini request: {e}")
-            break
 
     return {
         "is_match": False,
-        "reason": "Failed to evaluate listing via Gemini 3.7",
+        "reason": "Evaluation failed due to temporary server load",
         "german_message": ""
     }

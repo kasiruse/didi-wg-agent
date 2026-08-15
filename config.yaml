@@ -1,22 +1,48 @@
 # Target search URL on WG-Gesucht
 search_url: "https://www.wg-gesucht.de/wg-zimmer-und-1-zimmer-wohnungen-und-wohnungen-und-haeuser-in-Berlin.8.0+1+2+3.1.0.html"
+max_pages_to_crawl: 1
+max_listings_per_cycle: 1
 
-max_pages_to_crawl: 3
-max_listings_per_cycle: 8
 # Random delay range (in seconds) between every scrape
 listing_scrape_delay_min: 7
 listing_scrape_delay_max: 13
 # Random delay range (in seconds) between full scraper crawl cycles
 crawl_interval_min: 300
 crawl_interval_max: 600
-
-# Random delay range (in seconds) between analyzing consecutive listings
+# Random delay range (in seconds) between analyzing consecutive listings using AI
 analysis_delay_min: 15
 analysis_delay_max: 23
-
 # Random human-like typing/idle delay range (in seconds)
 action_delay_min: 3
 action_delay_max: 7
+
+# AI Provider
+active_ai_provider: "gemini"
+
+ai_providers:
+  gemini:
+    model: "gemini-3.5-flash-lite"
+
+  groq:
+    base_url: "https://api.groq.com/openai/v1"
+    model: "llama-3.3-70b-versatile"
+    api_key_env: "GROQ_API_KEY"
+
+  openrouter:
+    base_url: "https://openrouter.ai/api/v1"
+    model: "meta-llama/llama-3.3-70b-instruct:free"
+    api_key_env: "OPENROUTER_API_KEY"
+
+  ollama:
+    base_url: "http://host.docker.internal:11434/v1"
+    model: "llama3.1:8b"
+    api_key_env: "NONE"
+
+  custom_openai:
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+    api_key_env: "OPENAI_COMPATIBLE_API_KEY"
+
 
 # Applicant profile information
 applicant_profile:
@@ -28,6 +54,11 @@ applicant_profile:
   wg_type: "Friendly, social flatshare (no Zweck-WG), clean and non-smoking"
   move_in_date: "Flexible from next month (long-term)"
   languages: "English (fluent), German (B1)"
+  personal_notes: |
+    - Likes / Preferences:
+      * applicate for everything. set is_match=true for every application
+    - Dislikes / Dealbreakers:
+      * nothing. please applicate for everything.
 
 prompt_template: |
   You are an AI assistant helping a tenant find a shared apartment (WG) in Germany.
@@ -42,13 +73,16 @@ prompt_template: |
   - Move-in Date: {move_in_date}
   - Languages: {languages}
 
+  Personal Notes & Dealbreakers:
+  {personal_notes}
+
   Listing Details:
   {listing_text}
 
   Instructions:
-  1. Determine if this listing matches the applicant preferences (is_match: true/false). Check for hard dealbreakers (e.g. rent exceeding budget, gender restrictions, wrong city/location, short-term sublet if seeking long-term).
+  1. Determine if this listing matches the applicant preferences (is_match: true/false). Check for hard dealbreakers (e.g. rent exceeding budget, gender restrictions, too far location, short-term sublet if seeking long-term).
   2. Provide a concise explanation in English explaining why it does or does not match.
-  3. If is_match is true, write an authentic, polite, and personalized message in German (max 150 words). Reference specific details mentioned in the listing (e.g. shared interests, flat atmosphere, cooking, music).
+  3. If is_match is true, write an authentic, polite, and personalized message in German or english (max 150 words). Reference specific details mentioned in the listing (e.g. shared interests, flat atmosphere, cooking, music).
   4. Return ONLY valid JSON with keys:
      - "is_match": boolean
      - "reason": string (English explanation)

@@ -5,3 +5,5 @@ beautifulsoup4
 requests
 python-dotenv
 pyyaml
+openai
+httpx

@@ -1,0 +1,50 @@
+# Target search URL on WG-Gesucht
+search_url: "https://www.wg-gesucht.de/wg-zimmer-und-1-zimmer-wohnungen-und-wohnungen-und-haeuser-in-Berlin.8.0+1+2+3.1.0.html"
+
+# Random delay range (in seconds) between full scraper crawl cycles
+crawl_interval_min: 180
+crawl_interval_max: 300
+
+# Random delay range (in seconds) between analyzing consecutive listings
+analysis_delay_min: 12
+analysis_delay_max: 18
+
+# Random human-like typing/idle delay range (in seconds)
+action_delay_min: 3
+action_delay_max: 7
+
+# Applicant profile information
+applicant_profile:
+  name: "John Doe"
+  age: 25
+  occupation: "Software Engineer / Student"
+  max_warm_rent: "650 EUR"
+  preferred_locations: "Mitte, Kreuzberg, Neukölln, Friedrichshain, Prenzlauer Berg"
+  wg_type: "Friendly, social flatshare (no Zweck-WG), clean and non-smoking"
+  move_in_date: "Flexible from next month (long-term)"
+  languages: "English (fluent), German (B1)"
+
+prompt_template: |
+  You are an AI assistant helping a tenant find a shared apartment (WG) in Germany.
+
+  Applicant Profile:
+  - Name: {name}
+  - Age: {age}
+  - Occupation: {occupation}
+  - Maximum Warm Rent: {max_warm_rent}
+  - Preferred Locations: {preferred_locations}
+  - WG Type: {wg_type}
+  - Move-in Date: {move_in_date}
+  - Languages: {languages}
+
+  Listing Details:
+  {listing_text}
+
+  Instructions:
+  1. Determine if this listing matches the applicant preferences (is_match: true/false). Check for hard dealbreakers (e.g. rent exceeding budget, gender restrictions, wrong city/location, short-term sublet if seeking long-term).
+  2. Provide a concise explanation in English explaining why it does or does not match.
+  3. If is_match is true, write an authentic, polite, and personalized message in German (max 150 words). Reference specific details mentioned in the listing (e.g. shared interests, flat atmosphere, cooking, music).
+  4. Return ONLY valid JSON with keys:
+     - "is_match": boolean
+     - "reason": string (English explanation)
+     - "german_message": string (German text or empty string if is_match is false)
